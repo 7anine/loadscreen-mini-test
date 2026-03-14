@@ -264,6 +264,13 @@
       <span class="label">Avg. Salary</span>
       <span class="value" id="statSalary">—</span>
     </div>
+    <div class="stat-card" style="grid-column: span 2; display: flex; align-items: center; justify-content: center;">
+        <span class="label">Salary Distribution</span>
+      <div>
+        <canvas id="salaryChart" width="200" height="200" style="margin-top: 10px;"></canvas>
+      </div>
+      <div id="chartLegend" style="margin-left: 20px; font-size: 0.8rem; display: flex; flex-direction: column; gap: 5px;"></div>
+    </div>
   </div>
 
   <div class="toolbar">
@@ -277,6 +284,9 @@
       <option value="all">All Departments</option>
     </select>
     <span id="resultCount"></span>
+    <button id="addBtn" style="padding: 10px 16px; background: #0f3460; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">
+      + Add Employee
+    </button>
   </div>
 
   <div class="table-wrap">
@@ -289,6 +299,7 @@
           <th data-col="position">Position <span class="sort-icon">▲</span></th>
           <th data-col="hire_date">Hire Date <span class="sort-icon">▲</span></th>
           <th data-col="salary">Salary <span class="sort-icon">▲</span></th>
+          <th>Actions</th>
         </tr>
       </thead>
       <tbody id="tableBody">
@@ -296,7 +307,31 @@
       </tbody>
     </table>
   </div>
+  <div class="pagination" style="display: flex; justify-content: center; align-items: center; gap: 20px; margin-top: 20px;">
+    <button id="prevPage" style="padding: 8px 16px; cursor: pointer;">Previous</button>
+    <span id="pageInfo">Page 1 of 1</span>
+    <button id="nextPage" style="padding: 8px 16px; cursor: pointer;">Next</button>
+  </div>
 
+</div>
+
+<div id="modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); align-items:center; justify-content:center; z-index:1000;">
+  <div style="background:white; padding:24px; border-radius:12px; width:400px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
+    <h2 style="margin-bottom:16px;">Add New Employee</h2>
+    <form id="addForm" style="display:flex; flex-direction:column; gap:12px;">
+      <input type="hidden" name="id" id="employeeId">
+      <input type="text" name="name" placeholder="Full Name" required style="padding:10px; border:1px solid #ddd; border-radius:6px;">
+      <input type="text" name="department" placeholder="Department" required style="padding:10px; border:1px solid #ddd; border-radius:6px;">
+      <input type="text" name="position" placeholder="Position" required style="padding:10px; border:1px solid #ddd; border-radius:6px;">
+      <input type="email" name="email" placeholder="Email" required style="padding:10px; border:1px solid #ddd; border-radius:6px;">
+      <input type="date" name="hire_date" required style="padding:10px; border:1px solid #ddd; border-radius:6px;">
+      <input type="number" name="salary" placeholder="Salary" required style="padding:10px; border:1px solid #ddd; border-radius:6px;">
+      <div style="display:flex; gap:10px; margin-top:10px;">
+        <button type="submit" style="flex:1; padding:12px; background:#0f3460; color:white; border:none; border-radius:6px; cursor:pointer;">Save</button>
+        <button type="button" onclick="document.getElementById('modal').style.display='none'" style="flex:1; padding:12px; background:#eee; border:none; border-radius:6px; cursor:pointer;">Cancel</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <script>
@@ -370,6 +405,15 @@
         <td>${emp.position}</td>
         <td>${formatDate(emp.hire_date)}</td>
         <td style="font-weight:600">${formatSalary(emp.salary)}</td>
+        <td>
+          <button onclick='openEditModal(${JSON.stringify(emp)})' style="padding: 6px 10px; background: #0f3460; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.8rem; margin-right: 5px;">
+            Edit
+          </button>
+          <button onclick="deleteEmployee(${emp.id})" style="padding: 6px 10px; background: #ff4d4d; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.8rem;">
+            Delete
+          </button>
+        </td>
+        </td>
       </tr>
     `).join('');
   }
@@ -377,13 +421,16 @@
   function updateSortHeaders() {
     document.querySelectorAll('thead th').forEach(th => {
       const col = th.dataset.col;
+      if (!col) return;
       th.classList.toggle('active', col === sortCol);
       const icon = th.querySelector('.sort-icon');
-      if (col === sortCol) {
-        icon.textContent = sortOrder === 'asc' ? '▲' : '▼';
-      } else {
-        icon.textContent = '▲';
-      }
+      if(icon){
+        if (col === sortCol) {
+          icon.textContent = sortOrder === 'asc' ? '▲' : '▼';
+        } else {
+          icon.textContent = '▲';
+        }
+      }  
     });
   }
 
@@ -399,20 +446,52 @@
     document.getElementById('statDepts').textContent = depts.length;
   }
 
+  let currentPage = 1;
+  let totalPages = 1;
+
   async function loadEmployees() {
     const search = document.getElementById('searchInput').value;
     const department = document.getElementById('deptFilter').value;
-    const params = new URLSearchParams({ search, department, sort: sortCol, order: sortOrder });
-    const res = await fetch(`/api/employees?${params}`);
-    allEmployees = await res.json();
-    renderTable(allEmployees);
+    
+    const params = new URLSearchParams({ 
+      search, 
+      department, 
+      sort: sortCol, 
+      order: sortOrder,
+      page: currentPage 
+    });
 
-    if (department === 'all' && !search) {
-      document.getElementById('statTotal').textContent = allEmployees.length;
-      const avg = allEmployees.reduce((s, e) => s + e.salary, 0) / (allEmployees.length || 1);
-      document.getElementById('statSalary').textContent = '$' + Math.round(avg / 1000) + 'k';
+    const res = await fetch(`/api/employees?${params}`);
+    const data = await res.json();
+    
+    totalPages = data.totalPages;
+    renderTable(data.employees);
+    updatePaginationUI();
+
+    if (department === 'all' && !search && currentPage === 1) {
+      document.getElementById('statTotal').textContent = data.total;
     }
   }
+
+  function updatePaginationUI() {
+    document.getElementById('pageInfo').textContent = `Page ${currentPage} of ${totalPages}`;
+    document.getElementById('prevPage').disabled = currentPage <= 1;
+    document.getElementById('nextPage').disabled = currentPage >= totalPages;
+  }
+
+  document.getElementById('prevPage').onclick = () => {
+    if (currentPage > 1) {
+      currentPage--;
+      loadEmployees();
+    }
+  };
+
+  document.getElementById('nextPage').onclick = () => {
+    if (currentPage < totalPages) {
+      currentPage++;
+      loadEmployees();
+    }
+  };
 
   document.querySelectorAll('thead th[data-col]').forEach(th => {
     th.addEventListener('click', () => {
@@ -430,15 +509,162 @@
 
   let debounceTimer;
   document.getElementById('searchInput').addEventListener('input', () => {
+    currentPage = 1;
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(loadEmployees, 250);
   });
 
+  document.getElementById('deptFilter').addEventListener('change', () => {
+    currentPage = 1;
+    loadEmployees();
+  });
+
   document.getElementById('deptFilter').addEventListener('change', loadEmployees);
+  
+  document.getElementById('addBtn').onclick = () => document.getElementById('modal').style.display = 'flex';
+
+  document.getElementById('addForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const data = Object.fromEntries(formData.entries());
+
+    const res = await fetch('/api/employees', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+
+    if (res.ok) {
+      document.getElementById('modal').style.display = 'none';
+      e.target.reset();
+      loadEmployees();
+      updateGlobalStats();
+      drawSalaryChart();
+      loadDepartments();
+    }
+  };
+
+  async function deleteEmployee(id) {
+    if (confirm("Are you sure you want to delete this employee?")) {
+      const res = await fetch(`/api/employees/${id}`, {
+        method: 'DELETE'
+      });
+
+      if (res.ok) {
+        loadEmployees(); 
+        updateGlobalStats();
+        drawSalaryChart();
+        loadDepartments();
+      } else {
+        alert("Failed to delete employee.");
+      }
+    }
+  }
+
+  let isEditMode = false;
+
+  function openEditModal(emp) {
+    isEditMode = true;
+    document.getElementById('modal').style.display = 'flex';
+    document.querySelector('#modal h2').textContent = 'Edit Employee';
+    
+    const form = document.getElementById('addForm');
+    form.employeeId.value = emp.id;
+    form.name.value = emp.name;
+    form.department.value = emp.department;
+    form.position.value = emp.position;
+    form.email.value = emp.email;
+    form.hire_date.value = emp.hire_date;
+    form.salary.value = emp.salary;
+  }
+
+  document.getElementById('addBtn').onclick = () => {
+    isEditMode = false;
+    document.getElementById('addForm').reset();
+    document.querySelector('#modal h2').textContent = 'Add New Employee';
+    document.getElementById('modal').style.display = 'flex';
+  };
+  
+  document.getElementById('addForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const data = Object.fromEntries(formData.entries());
+    
+    const url = isEditMode ? `/api/employees/${data.id}` : '/api/employees';
+    const method = isEditMode ? 'PUT' : 'POST';
+
+    const res = await fetch(url, {
+      method: method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+
+    if (res.ok) {
+      document.getElementById('modal').style.display = 'none';
+      loadEmployees();
+      updateGlobalStats();
+      drawSalaryChart();
+      loadDepartments();
+    }
+  };
+
+  async function drawSalaryChart() {
+    const res = await fetch('/api/salary-by-department');
+    const data = await res.json();
+    
+    const canvas = document.getElementById('salaryChart');
+    const ctx = canvas.getContext('2d');
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const legend = document.getElementById('chartLegend');
+    legend.innerHTML = '';
+
+    const totalSalary = data.reduce((sum, d) => sum + d.total, 0);
+    let startAngle = 0;
+    
+    data.forEach((dept) => {
+      const sliceAngle = (dept.total / totalSalary) * 2 * Math.PI;
+      const color = DEPT_COLORS[dept.department] ? DEPT_COLORS[dept.department][1] : '#ccc';
+
+      ctx.beginPath();
+      ctx.moveTo(100, 100);
+      ctx.arc(100, 100, 80, startAngle, startAngle + sliceAngle);
+      ctx.closePath();
+      ctx.fillStyle = color;
+      ctx.fill();
+
+      legend.innerHTML += `
+        <div style="display:flex; align-items:center; gap:10px; font-family: sans-serif;">
+          <div style="width:14px; height:14px; background:${color}; border-radius:3px; flex-shrink:0;"></div>
+          <span style="font-weight: 500; color: #444;">${dept.department}</span>
+          <span style="margin-left: auto; color: #888; font-size: 0.8rem;">${Math.round((dept.total/totalSalary)*100)}%</span>
+        </div>
+      `;
+
+      startAngle += sliceAngle;
+    });
+  }
+  async function updateGlobalStats() {
+    try {
+      const res = await fetch('/api/stats');
+      const stats = await res.json();
+      
+      document.getElementById('statTotal').textContent = stats.total;
+      
+      const avg = Math.round(stats.avgSalary || 0);
+      document.getElementById('statSalary').textContent = formatSalary(avg);
+    } catch (err) {
+      console.error("Error updating global stats:", err);
+    }
+  }
 
   updateSortHeaders();
   loadDepartments();
   loadEmployees();
+  drawSalaryChart();
+  updateGlobalStats();
+
 </script>
 
 </body>
